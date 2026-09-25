@@ -135,6 +135,51 @@ router.put('/:id', (req, res) => {
   res.json(updatedRequest);
 });
 
+// Отправляем заявку на согласование, если она находится в статусе draft.
+router.post('/:id/submit', (req, res) => {
+  // Ищем заявку по ID.
+  const request = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+
+  // Возвращаем ошибку, если заявка не найдена.
+  if (!request) {
+    return res.status(404).json({
+      error: {
+        code: 'REQUEST_NOT_FOUND',
+        message: 'Заявка не найдена'
+      }
+    });
+  }
+
+  // Проверяем, что отправить можно только заявку в статусе draft.
+  if (request.status !== 'draft') {
+    return res.status(409).json({
+      error: {
+        code: 'REQUEST_NOT_SUBMITTABLE',
+        message: 'На согласование можно отправить только заявку в статусе draft'
+      }
+    });
+  }
+
+  // Меняем статус заявки на ожидание согласования.
+  db.prepare(`
+    UPDATE expense_requests
+    SET status = ?
+    WHERE id = ?
+  `).run('pending_approval', req.params.id);
+
+  // Получаем обновлённую заявку.
+  const updatedRequest = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+
+  // Возвращаем заявку с новым статусом.
+  res.json(updatedRequest);
+});
+
 // Получаем одну финансовую заявку по ID.
 router.get('/:id', (req, res) => {
   const request = db.prepare(`
