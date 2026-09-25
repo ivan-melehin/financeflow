@@ -180,6 +180,193 @@ router.post('/:id/submit', (req, res) => {
   res.json(updatedRequest);
 });
 
+// Согласовываем заявку, которая ожидает решения руководителя.
+router.post('/:id/approve', (req, res) => {
+  const { approverName, comment } = req.body;
+
+  // Ищем заявку по ID.
+  const request = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+
+  // Возвращаем ошибку, если заявка не найдена.
+  if (!request) {
+    return res.status(404).json({
+      error: {
+        code: 'REQUEST_NOT_FOUND',
+        message: 'Заявка не найдена'
+      }
+    });
+  }
+
+  // Проверяем, что согласовать можно только заявку на согласовании.
+  if (request.status !== 'pending_approval') {
+    return res.status(409).json({
+      error: {
+        code: 'REQUEST_NOT_APPROVABLE',
+        message: 'Согласовать можно только заявку в статусе pending_approval'
+      }
+    });
+  }
+
+  // Проверяем имя сотрудника, который согласовывает заявку.
+  if (!approverName) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Имя согласующего обязательно'
+      }
+    });
+  }
+
+  // Меняем статус заявки на approved.
+  db.prepare(`
+    UPDATE expense_requests
+    SET status = ?
+    WHERE id = ?
+  `).run('approved', req.params.id);
+
+  // Сохраняем решение руководителя в истории согласований.
+  db.prepare(`
+    INSERT INTO approvals (request_id, approver_name, status, comment)
+    VALUES (?, ?, ?, ?)
+  `).run(req.params.id, approverName, 'approved', comment || null);
+
+  // Получаем обновлённую заявку.
+  const updatedRequest = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+
+  // Возвращаем результат согласования.
+  res.json(updatedRequest);
+});
+
+// Отклоняем заявку, которая ожидает решения руководителя.
+router.post('/:id/reject', (req, res) => {
+  const { approverName, comment } = req.body;
+
+  // Ищем заявку по ID.
+  const request = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+
+  // Возвращаем ошибку, если заявка не найдена.
+  if (!request) {
+    return res.status(404).json({
+      error: {
+        code: 'REQUEST_NOT_FOUND',
+        message: 'Заявка не найдена'
+      }
+    });
+  }
+
+  // Проверяем, что отклонить можно только заявку на согласовании.
+  if (request.status !== 'pending_approval') {
+    return res.status(409).json({
+      error: {
+        code: 'REQUEST_NOT_REJECTABLE',
+        message: 'Отклонить можно только заявку в статусе pending_approval'
+      }
+    });
+  }
+
+  // Проверяем имя сотрудника, который принимает решение.
+  if (!approverName) {
+    return res.status(400).json({
+      error: {
+        code: 'VALIDATION_ERROR',
+        message: 'Имя согласующего обязательно'
+      }
+    });
+  }
+
+  // Проверяем, что причина отклонения указана.
+  if (!comment) {
+    return res.status(400).json({
+      error: {
+        code: 'REJECTION_COMMENT_REQUIRED',
+        message: 'Причина отклонения обязательна'
+      }
+    });
+  }
+
+  // Меняем статус заявки на rejected.
+  db.prepare(`
+    UPDATE expense_requests
+    SET status = ?
+    WHERE id = ?
+  `).run('rejected', req.params.id);
+
+  // Сохраняем решение руководителя в истории согласований.
+  db.prepare(`
+    INSERT INTO approvals (request_id, approver_name, status, comment)
+    VALUES (?, ?, ?, ?)
+  `).run(req.params.id, approverName, 'rejected', comment);
+
+  // Получаем обновлённую заявку.
+  const updatedRequest = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+
+  // Возвращаем результат отклонения.
+  res.json(updatedRequest);
+});
+
+// Оплачиваем заявку, если она была согласована.
+router.post('/:id/pay', (req, res) => {
+  // Ищем заявку по ID.
+  const request = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+
+  // Возвращаем ошибку, если заявка не найдена.
+  if (!request) {
+    return res.status(404).json({
+      error: {
+        code: 'REQUEST_NOT_FOUND',
+        message: 'Заявка не найдена'
+      }
+    });
+  }
+
+  // Проверяем, что оплачивать можно только согласованную заявку.
+  if (request.status !== 'approved') {
+    return res.status(409).json({
+      error: {
+        code: 'REQUEST_NOT_PAYABLE',
+        message: 'Оплатить можно только согласованную заявку'
+      }
+    });
+  }
+
+  // Создаём запись о платеже в базе данных.
+  db.prepare(`
+    INSERT INTO payments (request_id, amount)
+    VALUES (?, ?)
+  `).run(request.id, request.amount);
+
+  // Меняем статус заявки на paid.
+  db.prepare(`
+    UPDATE expense_requests
+    SET status = ?
+    WHERE id = ?
+  `).run('paid', request.id);
+
+  // Получаем обновлённую заявку.
+  const updatedRequest = db.prepare(`
+    SELECT * FROM expense_requests
+    WHERE id = ?
+  `).get(request.id);
+
+  // Возвращаем результат оплаты.
+  res.json(updatedRequest);
+});
+
 // Получаем одну финансовую заявку по ID.
 router.get('/:id', (req, res) => {
   const request = db.prepare(`
