@@ -1,5 +1,4 @@
-// const ONE_C_URL = 'http://localhost/InfoBase/hs/financeflow/payment';
-const ONE_C_URL = 'http://localhost/InfoBase/hs/financeflow/payment-test';
+const ONE_C_URL = 'http://localhost/InfoBase/hs/financeflow/payment';
 
 // Отправляет платёж из FinanceFlow в 1С.
 async function sendPaymentTo1C(payment) {
