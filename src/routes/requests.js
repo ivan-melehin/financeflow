@@ -1,5 +1,6 @@
 const express = require('express');
 const db = require('../db/database');
+const { sendPaymentTo1C } = require('../services/oneC');
 
 const router = express.Router();
 
@@ -316,14 +317,13 @@ router.post('/:id/reject', (req, res) => {
   res.json(updatedRequest);
 });
 
-// Оплачиваем заявку, если она была согласована.
-router.post('/:id/pay', (req, res) => {
+// Оплачиваем согласованную заявку и передаём платёж в 1С.
+router.post('/:id/pay', async (req, res) => {
   // Ищем заявку по ID.
   const request = db.prepare(`
     SELECT * FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-
   // Возвращаем ошибку, если заявка не найдена.
   if (!request) {
     return res.status(404).json({
@@ -333,7 +333,6 @@ router.post('/:id/pay', (req, res) => {
       }
     });
   }
-
   // Проверяем, что оплачивать можно только согласованную заявку.
   if (request.status !== 'approved') {
     return res.status(409).json({
@@ -343,28 +342,40 @@ router.post('/:id/pay', (req, res) => {
       }
     });
   }
-
-  // Создаём запись о платеже в базе данных.
-  db.prepare(`
-    INSERT INTO payments (request_id, amount)
-    VALUES (?, ?)
-  `).run(request.id, request.amount);
-
-  // Меняем статус заявки на paid.
-  db.prepare(`
-    UPDATE expense_requests
-    SET status = ?
-    WHERE id = ?
-  `).run('paid', request.id);
-
-  // Получаем обновлённую заявку.
-  const updatedRequest = db.prepare(`
-    SELECT * FROM expense_requests
-    WHERE id = ?
-  `).get(request.id);
-
-  // Возвращаем результат оплаты.
-  res.json(updatedRequest);
+  try {
+    // Передаём платёж в 1С.
+    const oneCResult = await sendPaymentTo1C(request);
+    // Создаём запись о платеже в базе данных.
+    db.prepare(`
+      INSERT INTO payments (request_id, amount)
+      VALUES (?, ?)
+    `).run(request.id, request.amount);
+    // Меняем статус заявки на paid.
+    db.prepare(`
+      UPDATE expense_requests
+      SET status = ?
+      WHERE id = ?
+    `).run('paid', request.id);
+    // Получаем обновлённую заявку.
+    const updatedRequest = db.prepare(`
+      SELECT * FROM expense_requests
+      WHERE id = ?
+    `).get(request.id);
+    // Возвращаем заявку и ответ 1С.
+    res.json({
+      request: updatedRequest,
+      oneC: oneCResult
+    });
+  } catch (error) {
+    // Не переводим заявку в paid, если 1С недоступна.
+    res.status(502).json({
+      error: {
+        code: 'ONE_C_INTEGRATION_ERROR',
+        message: 'Не удалось передать платёж в 1С',
+        details: error.message
+      }
+    });
+  }
 });
 
 // Получаем одну финансовую заявку по ID.

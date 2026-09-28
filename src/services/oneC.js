@@ -1,8 +1,9 @@
-const ONE_C_URL = 'http://localhost/InfoBase/hs/financeflow/payment';
+// const ONE_C_URL = 'http://localhost/InfoBase/hs/financeflow/payment';
+const ONE_C_URL = 'http://localhost/InfoBase/hs/financeflow/payment-test';
 
-// Отправляет платёж из FinanceFlow в 1С через HTTP-сервис.
+// Отправляет платёж из FinanceFlow в 1С.
 async function sendPaymentTo1C(payment) {
-  // Отправляем POST-запрос в 1С с JSON-данными.
+  // Отправляем POST-запрос с данными платежа.
   const response = await fetch(ONE_C_URL, {
     method: 'POST',
     headers: {
@@ -14,7 +15,7 @@ async function sendPaymentTo1C(payment) {
       description: payment.description
     })
   });
-  // Проверяем, успешно ли 1С обработала запрос.
+  // Проверяем успешность ответа 1С.
   if (!response.ok) {
     throw new Error(`1С вернула HTTP ${response.status}`);
   }
