@@ -1,0 +1,674 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FinanceFlow</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #f5f6f8;
+      color: #202124;
+    }
+    button, input, select, textarea {
+      font: inherit;
+    }
+    button {
+      cursor: pointer;
+    }
+    .header {
+      height: 64px;
+      background: #fff;
+      border-bottom: 1px solid #ddd;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+    }
+    .logo {
+      font-size: 21px;
+      font-weight: 700;
+    }
+    .role-select {
+      padding: 8px 12px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+    }
+    .layout {
+      display: flex;
+      min-height: calc(100vh - 64px);
+    }
+    .sidebar {
+      width: 230px;
+      background: #fff;
+      border-right: 1px solid #ddd;
+      padding: 20px 14px;
+    }
+    .sidebar button {
+      display: block;
+      width: 100%;
+      padding: 11px 12px;
+      margin-bottom: 6px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      text-align: left;
+    }
+    .sidebar button:hover,
+    .sidebar button.active {
+      background: #eef1f5;
+    }
+    .content {
+      flex: 1;
+      max-width: 1100px;
+      padding: 30px;
+    }
+    h1 {
+      margin-top: 0;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #ddd;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 18px;
+    }
+    .form-group {
+      margin-bottom: 16px;
+    }
+    .form-group label {
+      display: block;
+      margin-bottom: 6px;
+      font-weight: 600;
+    }
+    input, select, textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
+    }
+    textarea {
+      min-height: 100px;
+      resize: vertical;
+    }
+    .button {
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 15px;
+      background: #202124;
+      color: #fff;
+    }
+    .button.secondary {
+      background: #e9eaed;
+      color: #202124;
+    }
+    .button.danger {
+      background: #b42318;
+    }
+    .button.success {
+      background: #137333;
+    }
+    .button + .button {
+      margin-left: 6px;
+    }
+    .request {
+      border: 1px solid #ddd;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+    .request-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 15px;
+      margin-bottom: 8px;
+    }
+    .request-number {
+      font-weight: 700;
+    }
+    .status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: #eef1f5;
+      font-size: 13px;
+    }
+    .request-info {
+      color: #555;
+      margin: 5px 0;
+    }
+    .actions {
+      margin-top: 12px;
+    }
+    .budget-info {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: #f1f3f4;
+      margin-top: 8px;
+      font-size: 14px;
+    }
+    .budget-list {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .budget-list th,
+    .budget-list td {
+      padding: 12px 8px;
+      border-bottom: 1px solid #ddd;
+      text-align: left;
+    }
+    .hidden {
+      display: none;
+    }
+    .message {
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 15px;
+      background: #eef1f5;
+    }
+    .error {
+      background: #fdecec;
+      color: #9b1c1c;
+    }
+    .success-message {
+      background: #eaf7ed;
+      color: #176b2c;
+    }
+    .empty {
+      color: #777;
+      padding: 20px 0;
+    }
+  </style>
+</head>
+<body>
+  <header class="header">
+    <div class="logo">FinanceFlow</div>
+    <select id="roleSelect" class="role-select">
+      <option value="employee">Сотрудник</option>
+      <option value="manager">Руководитель</option>
+    </select>
+  </header>
+
+  <div class="layout">
+    <aside class="sidebar" id="sidebar"></aside>
+    <main class="content">
+      <div id="message"></div>
+      <div id="app"></div>
+    </main>
+  </div>
+
+  <script>
+    const API_URL = 'https://financeflow-api-rq38.onrender.com/api';
+    let requests = [];
+    let categories = [];
+    let budgets = [];
+
+    // Показываем сообщение пользователю.
+    function showMessage(text, type = '') {
+      const message = document.getElementById('message');
+      message.className = `message ${type}`;
+      message.textContent = text;
+    }
+
+    // Очищаем сообщение пользователя.
+    function clearMessage() {
+      const message = document.getElementById('message');
+      message.className = '';
+      message.textContent = '';
+    }
+
+    // Выполняем HTTP-запрос к API FinanceFlow.
+    async function api(path, options = {}) {
+      const response = await fetch(`${API_URL}${path}`, {
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        ...options
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error?.message || data.error || 'Ошибка API');
+      }
+      return data;
+    }
+
+    // Загружаем список заявок.
+    async function loadRequests() {
+      requests = await api('/requests');
+    }
+
+    // Загружаем статьи расходов.
+    async function loadCategories() {
+      const response = await fetch(`${API_URL}/categories`);
+      if (!response.ok) {
+        categories = [];
+        return;
+      }
+      categories = await response.json();
+    }
+
+    // Загружаем бюджеты.
+    async function loadBudgets() {
+      const response = await fetch(`${API_URL}/budgets`);
+      if (!response.ok) {
+        budgets = [];
+        return;
+      }
+      budgets = await response.json();
+    }
+
+    // Форматируем денежную сумму для интерфейса.
+    function formatMoney(value) {
+      return Number(value).toLocaleString('ru-RU') + ' ₽';
+    }
+
+    // Возвращаем русское название статуса заявки.
+    function statusName(status) {
+      const statuses = {
+        draft: 'Черновик',
+        pending_approval: 'На согласовании',
+        approved: 'Согласована',
+        rejected: 'Отклонена',
+        paid: 'Оплачена'
+      };
+      return statuses[status] || status;
+    }
+
+    // Строим меню сотрудника.
+    function renderEmployeeMenu() {
+      document.getElementById('sidebar').innerHTML = `
+        <button class="active" onclick="showEmployeeRequests()">Мои заявки</button>
+        <button onclick="showCreateRequest()">Создать заявку</button>
+      `;
+    }
+
+    // Строим меню руководителя.
+    function renderManagerMenu() {
+      document.getElementById('sidebar').innerHTML = `
+        <button class="active" onclick="showManagerRequests()">Заявки</button>
+        <button onclick="showBudgets()">Бюджеты</button>
+        <button onclick="showCategories()">Статьи расходов</button>
+      `;
+    }
+
+    // Показываем заявки сотрудника.
+    async function showEmployeeRequests() {
+      clearMessage();
+      renderEmployeeMenu();
+      try {
+        await loadRequests();
+        const app = document.getElementById('app');
+        const employeeRequests = requests;
+        app.innerHTML = `
+          <h1>Мои заявки</h1>
+          <div class="card">
+            ${employeeRequests.length ? employeeRequests.map(renderRequest).join('') : '<div class="empty">Заявок пока нет.</div>'}
+          </div>
+        `;
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Показываем форму создания заявки.
+    async function showCreateRequest() {
+      clearMessage();
+      renderEmployeeMenu();
+      try {
+        await loadCategories();
+        document.getElementById('app').innerHTML = `
+          <h1>Новая заявка</h1>
+          <div class="card">
+            <div class="form-group">
+              <label>Номер заявки</label>
+              <input value="Будет создан автоматически" disabled>
+            </div>
+            <div class="form-group">
+              <label for="amount">Сумма</label>
+              <input id="amount" type="number" min="1" placeholder="30000">
+            </div>
+            <div class="form-group">
+              <label for="category">Статья расходов</label>
+              <select id="category" onchange="showCategoryBudget()">
+                <option value="">Выберите статью</option>
+                ${categories.map(category => `
+                  <option value="${category.id}">${category.name}</option>
+                `).join('')}
+              </select>
+              <div id="categoryBudget" class="budget-info hidden"></div>
+            </div>
+            <div class="form-group">
+              <label for="description">Описание</label>
+              <textarea id="description" placeholder="Например: Оплата услуг подрядчика"></textarea>
+            </div>
+            <button class="button" onclick="createRequest()">Создать заявку</button>
+          </div>
+        `;
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Показываем доступный бюджет выбранной статьи.
+    function showCategoryBudget() {
+      const categoryId = Number(document.getElementById('category').value);
+      const block = document.getElementById('categoryBudget');
+      const budget = budgets.find(item => Number(item.category_id) === categoryId);
+      if (!categoryId || !budget) {
+        block.classList.add('hidden');
+        return;
+      }
+      const remaining = Number(budget.limit_amount) - Number(budget.reserved_amount || 0);
+      block.classList.remove('hidden');
+      block.textContent = `Доступный бюджет: ${formatMoney(remaining)}`;
+    }
+
+    // Создаём заявку без передачи номера, потому что его создаёт сервер.
+    async function createRequest() {
+      clearMessage();
+      const amount = Number(document.getElementById('amount').value);
+      const categoryId = Number(document.getElementById('category').value);
+      const description = document.getElementById('description').value.trim();
+      try {
+        const request = await api('/requests', {
+          method: 'POST',
+          body: JSON.stringify({
+            amount,
+            categoryId,
+            description
+          })
+        });
+        showMessage(`Заявка ${request.number} создана`, 'success-message');
+        showEmployeeRequests();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Показываем заявку в виде карточки.
+    function renderRequest(request) {
+      return `
+        <div class="request">
+          <div class="request-header">
+            <div class="request-number">${request.number}</div>
+            <span class="status">${statusName(request.status)}</span>
+          </div>
+          <div class="request-info">Сумма: <strong>${formatMoney(request.amount)}</strong></div>
+          <div class="request-info">Статья: ${request.category_name || 'Не указана'}</div>
+          <div class="request-info">${request.description}</div>
+          <div class="actions">
+            ${request.status === 'draft'
+              ? `<button class="button" onclick="submitRequest(${request.id})">Отправить на согласование</button>`
+              : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // Отправляем заявку на согласование.
+    async function submitRequest(id) {
+      clearMessage();
+      try {
+        await api(`/requests/${id}/submit`, {
+          method: 'POST'
+        });
+        showMessage('Заявка отправлена на согласование', 'success-message');
+        showEmployeeRequests();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Показываем заявки руководителю.
+    async function showManagerRequests() {
+      clearMessage();
+      renderManagerMenu();
+      try {
+        await loadRequests();
+        document.getElementById('app').innerHTML = `
+          <h1>Заявки</h1>
+          <div class="card">
+            ${requests.length ? requests.map(renderManagerRequest).join('') : '<div class="empty">Заявок пока нет.</div>'}
+          </div>
+        `;
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Показываем заявку с действиями руководителя.
+    function renderManagerRequest(request) {
+      return `
+        <div class="request">
+          <div class="request-header">
+            <div class="request-number">${request.number}</div>
+            <span class="status">${statusName(request.status)}</span>
+          </div>
+          <div class="request-info">Сумма: <strong>${formatMoney(request.amount)}</strong></div>
+          <div class="request-info">Статья: ${request.category_name || 'Не указана'}</div>
+          <div class="request-info">${request.description}</div>
+          <div class="actions">
+            ${request.status === 'pending_approval'
+              ? `
+                <button class="button success" onclick="approveRequest(${request.id})">Согласовать</button>
+                <button class="button danger" onclick="rejectRequest(${request.id})">Отклонить</button>
+              `
+              : ''}
+            ${request.status === 'approved'
+              ? `<button class="button" onclick="payRequest(${request.id})">Передать в 1С</button>`
+              : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    // Согласовываем заявку от имени руководителя.
+    async function approveRequest(id) {
+      const approverName = prompt('Введите имя руководителя:', 'Руководитель');
+      if (!approverName) return;
+      try {
+        await api(`/requests/${id}/approve`, {
+          method: 'POST',
+          body: JSON.stringify({
+            approverName
+          })
+        });
+        showMessage('Заявка согласована', 'success-message');
+        showManagerRequests();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Отклоняем заявку с указанием причины.
+    async function rejectRequest(id) {
+      const approverName = prompt('Введите имя руководителя:', 'Руководитель');
+      if (!approverName) return;
+      const comment = prompt('Причина отклонения:');
+      if (!comment) return;
+      try {
+        await api(`/requests/${id}/reject`, {
+          method: 'POST',
+          body: JSON.stringify({
+            approverName,
+            comment
+          })
+        });
+        showMessage('Заявка отклонена', 'success-message');
+        showManagerRequests();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Передаём согласованную заявку в 1С.
+    async function payRequest(id) {
+      if (!confirm('Передать заявку в 1С для оплаты?')) return;
+      try {
+        await api(`/requests/${id}/pay`, {
+          method: 'POST'
+        });
+        showMessage('Заявка передана в 1С', 'success-message');
+        showManagerRequests();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Показываем страницу управления бюджетами.
+    async function showBudgets() {
+      clearMessage();
+      renderManagerMenu();
+      try {
+        await Promise.all([
+          loadCategories(),
+          loadBudgets()
+        ]);
+        document.getElementById('app').innerHTML = `
+          <h1>Бюджеты</h1>
+          <div class="card">
+            <h3>Установить или изменить лимит</h3>
+            <div class="form-group">
+              <label for="budgetCategory">Статья расходов</label>
+              <select id="budgetCategory">
+                <option value="">Выберите статью</option>
+                ${categories.map(category => `
+                  <option value="${category.id}">${category.name}</option>
+                `).join('')}
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="budgetAmount">Лимит</label>
+              <input id="budgetAmount" type="number" min="1" placeholder="100000">
+            </div>
+            <div class="form-group">
+              <label for="budgetStart">Начало периода</label>
+              <input id="budgetStart" type="date" value="${new Date().toISOString().slice(0, 10)}">
+            </div>
+            <div class="form-group">
+              <label for="budgetEnd">Конец периода</label>
+              <input id="budgetEnd" type="date" value="${new Date().getFullYear()}-12-31">
+            </div>
+            <button class="button" onclick="saveBudget()">Сохранить лимит</button>
+          </div>
+          <div class="card">
+            <h3>Установленные лимиты</h3>
+            ${budgets.length ? `
+              <table class="budget-list">
+                <thead>
+                  <tr>
+                    <th>Статья</th>
+                    <th>Лимит</th>
+                    <th>Использовано</th>
+                    <th>Остаток</th>
+                    <th>Период</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${budgets.map(budget => {
+                    const remaining = Number(budget.limit_amount) - Number(budget.reserved_amount || 0);
+                    return `
+                      <tr>
+                        <td>${budget.category_name || '—'}</td>
+                        <td>${formatMoney(budget.limit_amount)}</td>
+                        <td>${formatMoney(budget.reserved_amount || 0)}</td>
+                        <td>${formatMoney(remaining)}</td>
+                        <td>${budget.period_start} — ${budget.period_end}</td>
+                      </tr>
+                    `;
+                  }).join('')}
+                </tbody>
+              </table>
+            ` : '<div class="empty">Бюджеты пока не настроены.</div>'}
+          </div>
+        `;
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Сохраняем новый бюджетный лимит через API.
+    async function saveBudget() {
+      const categoryId = Number(document.getElementById('budgetCategory').value);
+      const limitAmount = Number(document.getElementById('budgetAmount').value);
+      const periodStart = document.getElementById('budgetStart').value;
+      const periodEnd = document.getElementById('budgetEnd').value;
+      if (!categoryId || !limitAmount || !periodStart || !periodEnd) {
+        showMessage('Заполните все поля бюджета', 'error');
+        return;
+      }
+      try {
+        await api('/budgets', {
+          method: 'POST',
+          body: JSON.stringify({
+            categoryId,
+            limitAmount,
+            periodStart,
+            periodEnd
+          })
+        });
+        showMessage('Бюджет сохранён', 'success-message');
+        showBudgets();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Показываем статьи расходов руководителю.
+    async function showCategories() {
+      clearMessage();
+      renderManagerMenu();
+      try {
+        await loadCategories();
+        document.getElementById('app').innerHTML = `
+          <h1>Статьи расходов</h1>
+          <div class="card">
+            ${categories.length
+              ? categories.map(category => `
+                <div class="request">
+                  <strong>${category.name}</strong>
+                  <div class="request-info">${category.description || ''}</div>
+                </div>
+              `).join('')
+              : '<div class="empty">Статей расходов пока нет.</div>'}
+          </div>
+        `;
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    // Переключаем интерфейс между сотрудником и руководителем.
+    async function switchRole() {
+      const role = document.getElementById('roleSelect').value;
+      if (role === 'manager') {
+        await showManagerRequests();
+      } else {
+        await showEmployeeRequests();
+      }
+    }
+
+    document.getElementById('roleSelect').addEventListener('change', switchRole);
+
+    // Запускаем интерфейс сотрудника после загрузки страницы.
+    async function init() {
+      try {
+        await loadCategories();
+        await loadBudgets();
+        await showEmployeeRequests();
+      } catch (error) {
+        showMessage(error.message, 'error');
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

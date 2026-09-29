@@ -1,24 +1,51 @@
 const express = require('express');
 const db = require('../db/database');
 const { sendPaymentTo1C } = require('../services/oneC');
-
 const router = express.Router();
 
-// Создаём новую финансовую заявку и проверяем входные данные.
-router.post('/', (req, res) => {
-  const { number, amount, description } = req.body;
+// Создаём номер следующей заявки на основе максимального ID.
+function generateRequestNumber() {
+  const row = db.prepare(`
+    SELECT COALESCE(MAX(id), 0) + 1 AS next_id
+    FROM expense_requests
+  `).get();
+  return `FF-${String(row.next_id).padStart(4, '0')}`;
+}
 
-  // Проверяем обязательные поля.
-  if (!number || amount === undefined || !description) {
+// Получаем действующий бюджет выбранной статьи расходов.
+function getCurrentBudget(categoryId) {
+  return db.prepare(`
+    SELECT *
+    FROM budgets
+    WHERE category_id = ?
+      AND date('now') BETWEEN date(period_start) AND date(period_end)
+    ORDER BY id DESC
+    LIMIT 1
+  `).get(categoryId);
+}
+
+// Считаем сумму заявок, которая уже использует бюджет статьи.
+function getReservedAmount(categoryId) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) AS reserved_amount
+    FROM expense_requests
+    WHERE category_id = ?
+      AND status IN ('pending_approval', 'approved', 'paid')
+  `).get(categoryId);
+  return row.reserved_amount;
+}
+
+// Создаём новую заявку с автоматическим номером.
+router.post('/', (req, res) => {
+  const { amount, description, categoryId } = req.body;
+  if (amount === undefined || !description || !categoryId) {
     return res.status(400).json({
       error: {
         code: 'VALIDATION_ERROR',
-        message: 'Номер, сумма и описание обязательны'
+        message: 'Сумма, описание и статья расходов обязательны'
       }
     });
   }
-
-  // Проверяем, что сумма является положительным числом.
   if (typeof amount !== 'number' || amount <= 0) {
     return res.status(400).json({
       error: {
@@ -27,59 +54,56 @@ router.post('/', (req, res) => {
       }
     });
   }
-
-  // Проверяем, что заявки с таким номером ещё нет.
-  const existingRequest = db.prepare(`
-    SELECT id FROM expense_requests
-    WHERE number = ?
-  `).get(number);
-
-  if (existingRequest) {
-    return res.status(409).json({
+  const category = db.prepare(`
+    SELECT id, name
+    FROM expense_categories
+    WHERE id = ? AND active = 1
+  `).get(categoryId);
+  if (!category) {
+    return res.status(400).json({
       error: {
-        code: 'DUPLICATE_NUMBER',
-        message: 'Заявка с таким номером уже существует'
+        code: 'CATEGORY_NOT_FOUND',
+        message: 'Статья расходов не найдена или отключена'
       }
     });
   }
-
-  // Сохраняем прошедшую валидацию заявку в базу данных.
+  const number = generateRequestNumber();
   const result = db.prepare(`
-    INSERT INTO expense_requests (number, amount, description)
-    VALUES (?, ?, ?)
-  `).run(number, amount, description);
-
-  // Возвращаем созданную заявку.
+    INSERT INTO expense_requests (number, amount, description, category_id)
+    VALUES (?, ?, ?, ?)
+  `).run(number, amount, description, category.id);
   res.status(201).json({
     id: result.lastInsertRowid,
     number,
     amount,
     description,
+    categoryId: category.id,
+    categoryName: category.name,
     status: 'draft'
   });
 });
 
-// Получаем список всех финансовых заявок.
+// Получаем список заявок вместе с названиями статей расходов.
 router.get('/', (req, res) => {
   const requests = db.prepare(`
-    SELECT * FROM expense_requests
-    ORDER BY id DESC
+    SELECT
+      r.*,
+      c.name AS category_name
+    FROM expense_requests r
+    LEFT JOIN expense_categories c ON c.id = r.category_id
+    ORDER BY r.id DESC
   `).all();
-
   res.json(requests);
 });
 
-// Редактируем финансовую заявку, если она ещё находится в статусе draft.
+// Редактируем заявку, пока она находится в статусе draft.
 router.put('/:id', (req, res) => {
-  const { amount, description } = req.body;
-
-  // Ищем заявку по ID.
+  const { amount, description, categoryId } = req.body;
   const request = db.prepare(`
-    SELECT * FROM expense_requests
+    SELECT *
+    FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-
-  // Возвращаем ошибку, если заявка не найдена.
   if (!request) {
     return res.status(404).json({
       error: {
@@ -88,8 +112,6 @@ router.put('/:id', (req, res) => {
       }
     });
   }
-
-  // Запрещаем редактирование заявки после отправки на согласование.
   if (request.status !== 'draft') {
     return res.status(409).json({
       error: {
@@ -98,8 +120,6 @@ router.put('/:id', (req, res) => {
       }
     });
   }
-
-  // Проверяем, что сумма передана и является положительным числом.
   if (amount === undefined || typeof amount !== 'number' || amount <= 0) {
     return res.status(400).json({
       error: {
@@ -108,43 +128,50 @@ router.put('/:id', (req, res) => {
       }
     });
   }
-
-  // Проверяем, что описание передано.
-  if (!description) {
+  if (!description || !categoryId) {
     return res.status(400).json({
       error: {
         code: 'VALIDATION_ERROR',
-        message: 'Описание обязательно'
+        message: 'Сумма, описание и статья расходов обязательны'
       }
     });
   }
-
-  // Обновляем сумму и описание заявки в базе данных.
+  const category = db.prepare(`
+    SELECT id, name
+    FROM expense_categories
+    WHERE id = ? AND active = 1
+  `).get(categoryId);
+  if (!category) {
+    return res.status(400).json({
+      error: {
+        code: 'CATEGORY_NOT_FOUND',
+        message: 'Статья расходов не найдена или отключена'
+      }
+    });
+  }
   db.prepare(`
     UPDATE expense_requests
-    SET amount = ?, description = ?
+    SET amount = ?, description = ?, category_id = ?
     WHERE id = ?
-  `).run(amount, description, req.params.id);
-
-  // Получаем обновлённую заявку из базы данных.
+  `).run(amount, description, category.id, req.params.id);
   const updatedRequest = db.prepare(`
-    SELECT * FROM expense_requests
-    WHERE id = ?
+    SELECT
+      r.*,
+      c.name AS category_name
+    FROM expense_requests r
+    LEFT JOIN expense_categories c ON c.id = r.category_id
+    WHERE r.id = ?
   `).get(req.params.id);
-
-  // Возвращаем обновлённую заявку.
   res.json(updatedRequest);
 });
 
-// Отправляем заявку на согласование, если она находится в статусе draft.
+// Отправляем заявку на согласование после проверки бюджета.
 router.post('/:id/submit', (req, res) => {
-  // Ищем заявку по ID.
   const request = db.prepare(`
-    SELECT * FROM expense_requests
+    SELECT *
+    FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-
-  // Возвращаем ошибку, если заявка не найдена.
   if (!request) {
     return res.status(404).json({
       error: {
@@ -153,8 +180,6 @@ router.post('/:id/submit', (req, res) => {
       }
     });
   }
-
-  // Проверяем, что отправить можно только заявку в статусе draft.
   if (request.status !== 'draft') {
     return res.status(409).json({
       error: {
@@ -163,35 +188,60 @@ router.post('/:id/submit', (req, res) => {
       }
     });
   }
-
-  // Меняем статус заявки на ожидание согласования.
+  if (!request.category_id) {
+    return res.status(409).json({
+      error: {
+        code: 'CATEGORY_REQUIRED',
+        message: 'Для отправки заявки необходимо выбрать статью расходов'
+      }
+    });
+  }
+  const budget = getCurrentBudget(request.category_id);
+  if (!budget) {
+    return res.status(409).json({
+      error: {
+        code: 'BUDGET_NOT_FOUND',
+        message: 'Для выбранной статьи расходов не установлен действующий бюджет'
+      }
+    });
+  }
+  const reservedAmount = getReservedAmount(request.category_id);
+  const remainingAmount = budget.limit_amount - reservedAmount;
+  if (request.amount > remainingAmount) {
+    return res.status(409).json({
+      error: {
+        code: 'BUDGET_EXCEEDED',
+        message: 'Сумма заявки превышает доступный бюджет',
+        limitAmount: budget.limit_amount,
+        reservedAmount,
+        remainingAmount
+      }
+    });
+  }
   db.prepare(`
     UPDATE expense_requests
     SET status = ?
     WHERE id = ?
   `).run('pending_approval', req.params.id);
-
-  // Получаем обновлённую заявку.
   const updatedRequest = db.prepare(`
-    SELECT * FROM expense_requests
-    WHERE id = ?
+    SELECT
+      r.*,
+      c.name AS category_name
+    FROM expense_requests r
+    LEFT JOIN expense_categories c ON c.id = r.category_id
+    WHERE r.id = ?
   `).get(req.params.id);
-
-  // Возвращаем заявку с новым статусом.
   res.json(updatedRequest);
 });
 
 // Согласовываем заявку, которая ожидает решения руководителя.
 router.post('/:id/approve', (req, res) => {
   const { approverName, comment } = req.body;
-
-  // Ищем заявку по ID.
   const request = db.prepare(`
-    SELECT * FROM expense_requests
+    SELECT *
+    FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-
-  // Возвращаем ошибку, если заявка не найдена.
   if (!request) {
     return res.status(404).json({
       error: {
@@ -200,8 +250,6 @@ router.post('/:id/approve', (req, res) => {
       }
     });
   }
-
-  // Проверяем, что согласовать можно только заявку на согласовании.
   if (request.status !== 'pending_approval') {
     return res.status(409).json({
       error: {
@@ -210,8 +258,6 @@ router.post('/:id/approve', (req, res) => {
       }
     });
   }
-
-  // Проверяем имя сотрудника, который согласовывает заявку.
   if (!approverName) {
     return res.status(400).json({
       error: {
@@ -220,41 +266,31 @@ router.post('/:id/approve', (req, res) => {
       }
     });
   }
-
-  // Меняем статус заявки на approved.
   db.prepare(`
     UPDATE expense_requests
     SET status = ?
     WHERE id = ?
   `).run('approved', req.params.id);
-
-  // Сохраняем решение руководителя в истории согласований.
   db.prepare(`
     INSERT INTO approvals (request_id, approver_name, status, comment)
     VALUES (?, ?, ?, ?)
   `).run(req.params.id, approverName, 'approved', comment || null);
-
-  // Получаем обновлённую заявку.
   const updatedRequest = db.prepare(`
-    SELECT * FROM expense_requests
+    SELECT *
+    FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-
-  // Возвращаем результат согласования.
   res.json(updatedRequest);
 });
 
-// Отклоняем заявку, которая ожидает решения руководителя.
+// Отклоняем заявку с обязательным комментарием руководителя.
 router.post('/:id/reject', (req, res) => {
   const { approverName, comment } = req.body;
-
-  // Ищем заявку по ID.
   const request = db.prepare(`
-    SELECT * FROM expense_requests
+    SELECT *
+    FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-
-  // Возвращаем ошибку, если заявка не найдена.
   if (!request) {
     return res.status(404).json({
       error: {
@@ -263,8 +299,6 @@ router.post('/:id/reject', (req, res) => {
       }
     });
   }
-
-  // Проверяем, что отклонить можно только заявку на согласовании.
   if (request.status !== 'pending_approval') {
     return res.status(409).json({
       error: {
@@ -273,8 +307,6 @@ router.post('/:id/reject', (req, res) => {
       }
     });
   }
-
-  // Проверяем имя сотрудника, который принимает решение.
   if (!approverName) {
     return res.status(400).json({
       error: {
@@ -283,8 +315,6 @@ router.post('/:id/reject', (req, res) => {
       }
     });
   }
-
-  // Проверяем, что причина отклонения указана.
   if (!comment) {
     return res.status(400).json({
       error: {
@@ -293,38 +323,30 @@ router.post('/:id/reject', (req, res) => {
       }
     });
   }
-
-  // Меняем статус заявки на rejected.
   db.prepare(`
     UPDATE expense_requests
     SET status = ?
     WHERE id = ?
   `).run('rejected', req.params.id);
-
-  // Сохраняем решение руководителя в истории согласований.
   db.prepare(`
     INSERT INTO approvals (request_id, approver_name, status, comment)
     VALUES (?, ?, ?, ?)
   `).run(req.params.id, approverName, 'rejected', comment);
-
-  // Получаем обновлённую заявку.
   const updatedRequest = db.prepare(`
-    SELECT * FROM expense_requests
+    SELECT *
+    FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-
-  // Возвращаем результат отклонения.
   res.json(updatedRequest);
 });
 
 // Оплачиваем согласованную заявку и передаём платёж в 1С.
 router.post('/:id/pay', async (req, res) => {
-  // Ищем заявку по ID.
   const request = db.prepare(`
-    SELECT * FROM expense_requests
+    SELECT *
+    FROM expense_requests
     WHERE id = ?
   `).get(req.params.id);
-  // Возвращаем ошибку, если заявка не найдена.
   if (!request) {
     return res.status(404).json({
       error: {
@@ -333,7 +355,6 @@ router.post('/:id/pay', async (req, res) => {
       }
     });
   }
-  // Проверяем, что оплачивать можно только согласованную заявку.
   if (request.status !== 'approved') {
     return res.status(409).json({
       error: {
@@ -343,31 +364,26 @@ router.post('/:id/pay', async (req, res) => {
     });
   }
   try {
-    // Передаём платёж в 1С.
     const oneCResult = await sendPaymentTo1C(request);
-    // Создаём запись о платеже в базе данных.
     db.prepare(`
       INSERT INTO payments (request_id, amount)
       VALUES (?, ?)
     `).run(request.id, request.amount);
-    // Меняем статус заявки на paid.
     db.prepare(`
       UPDATE expense_requests
       SET status = ?
       WHERE id = ?
     `).run('paid', request.id);
-    // Получаем обновлённую заявку.
     const updatedRequest = db.prepare(`
-      SELECT * FROM expense_requests
+      SELECT *
+      FROM expense_requests
       WHERE id = ?
     `).get(request.id);
-    // Возвращаем заявку и ответ 1С.
     res.json({
       request: updatedRequest,
       oneC: oneCResult
     });
   } catch (error) {
-    // Не переводим заявку в paid, если 1С недоступна.
     res.status(502).json({
       error: {
         code: 'ONE_C_INTEGRATION_ERROR',
@@ -378,19 +394,21 @@ router.post('/:id/pay', async (req, res) => {
   }
 });
 
-// Получаем одну финансовую заявку по ID.
+// Получаем одну заявку по ID вместе со статьёй расходов.
 router.get('/:id', (req, res) => {
   const request = db.prepare(`
-    SELECT * FROM expense_requests
-    WHERE id = ?
+    SELECT
+      r.*,
+      c.name AS category_name
+    FROM expense_requests r
+    LEFT JOIN expense_categories c ON c.id = r.category_id
+    WHERE r.id = ?
   `).get(req.params.id);
-
   if (!request) {
     return res.status(404).json({
       error: 'Заявка не найдена'
     });
   }
-
   res.json(request);
 });
 
