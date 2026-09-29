@@ -2,7 +2,11 @@ const express = require('express');
 const requestsRouter = require('./routes/requests');
 
 const app = express();
-const PORT = 3000;
+// Запускаем сервер на порту Render или 3000 локально.
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`FinanceFlow API запущен на порту ${PORT}`);
+});
 
 // Разрешаем API принимать JSON в теле запроса.
 app.use(express.json());
