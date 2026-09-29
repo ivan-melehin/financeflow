@@ -4,6 +4,11 @@ const requestsRouter = require('./routes/requests');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+const path = require('path');
+
+// Разрешаем Express отдавать файлы интерфейса из папки public.
+app.use(express.static(path.join(__dirname, '../public')));
+
 // Разрешаем API принимать JSON в теле запроса.
 app.use(express.json());
 
