@@ -165,6 +165,45 @@ router.put('/:id', (req, res) => {
   res.json(updatedRequest);
 });
 
+// Удаляем заявку, пока она находится в статусе draft.
+router.delete('/:id', (req, res) => {
+  // Получаем заявку по ID.
+  const request = db.prepare(`
+    SELECT *
+    FROM expense_requests
+    WHERE id = ?
+  `).get(req.params.id);
+  // Проверяем, существует ли заявка.
+  if (!request) {
+    return res.status(404).json({
+      error: {
+        code: 'REQUEST_NOT_FOUND',
+        message: 'Заявка не найдена'
+      }
+    });
+  }
+  // Разрешаем удаление только черновика.
+  if (request.status !== 'draft') {
+    return res.status(409).json({
+      error: {
+        code: 'REQUEST_NOT_DELETABLE',
+        message: 'Удалить можно только заявку в статусе draft'
+      }
+    });
+  }
+  // Удаляем заявку из базы данных.
+  db.prepare(`
+    DELETE FROM expense_requests
+    WHERE id = ?
+  `).run(req.params.id);
+  // Возвращаем подтверждение удаления.
+  res.json({
+    success: true,
+    message: 'Заявка удалена',
+    id: Number(req.params.id)
+  });
+});
+
 // Отправляем заявку на согласование после проверки бюджета.
 router.post('/:id/submit', (req, res) => {
   const request = db.prepare(`
