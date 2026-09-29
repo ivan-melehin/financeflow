@@ -6,6 +6,9 @@ const PORT = process.env.PORT || 3000;
 
 const path = require('path');
 
+const categoriesRouter = require('./routes/categories');
+const budgetsRouter = require('./routes/budgets');
+
 // Разрешаем Express отдавать файлы интерфейса из папки public.
 app.use(express.static(path.join(__dirname, '../public')));
 
@@ -22,6 +25,12 @@ app.get('/', (req, res) => {
 
 // Подключаем маршруты финансовых заявок.
 app.use('/api/requests', requestsRouter);
+
+// Подключаем маршруты статей расходов.
+app.use('/api/categories', categoriesRouter);
+
+// Подключаем маршруты бюджетов.
+app.use('/api/budgets', budgetsRouter);
 
 // Запускаем сервер на порту Render или 3000 локально.
 app.listen(PORT, '0.0.0.0', () => {
