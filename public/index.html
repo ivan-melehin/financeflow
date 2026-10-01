@@ -31,17 +31,8 @@
     .button.danger { background: #b42318; }
     .button.success { background: #137333; }
     .button + .button { margin-left: 6px; }
-    .request-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.request-actions .button {
-  margin: 0;
-}
+    .request-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 12px; }
+    .request-actions .button { margin: 0; }
     .request { border: 1px solid #ddd; border-radius: 10px; padding: 16px; margin-bottom: 10px; background: #fff; }
     .request-header { display: flex; justify-content: space-between; align-items: center; gap: 15px; margin-bottom: 8px; }
     .request-number { font-weight: 700; }
@@ -54,6 +45,8 @@
     .category-title { font-weight: 700; font-size: 16px; }
     .category-description { color: #666; margin-top: 5px; }
     .category-actions { margin-top: 12px; }
+    .one-c-link { display: inline-block; margin-top: 10px; color: #137333; text-decoration: none; font-weight: 600; }
+    .one-c-link:hover { text-decoration: underline; }
     .hidden { display: none; }
     .message { padding: 12px; border-radius: 8px; margin-bottom: 15px; background: #eef1f5; }
     .error { background: #fdecec; color: #9b1c1c; }
@@ -77,7 +70,6 @@
       <option value="manager">Руководитель</option>
     </select>
   </header>
-
   <div class="layout">
     <aside class="sidebar" id="sidebar"></aside>
     <main class="content">
@@ -85,10 +77,9 @@
       <div id="app"></div>
     </main>
   </div>
-
   <script>
     const API = '/api';
-    let requests = [];
+    const ONE_C_BASE_URL = 'http://localhost/InfoBase/hs/financeflow/paymentid/';    let requests = [];
     let categories = [];
     let budgets = [];
 
@@ -159,6 +150,11 @@
         .replace(/"/g, '&quot;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
+    }
+
+    // Формируем ссылку на HTML-карточку документа 1С.
+    function getOneCDocumentUrl(documentId) {
+      return `${ONE_C_BASE_URL}${encodeURIComponent(documentId)}`;
     }
 
     // Показываем меню сотрудника.
@@ -279,31 +275,33 @@
     }
 
     // Формируем карточку заявки сотрудника.
-function renderRequest(request) {
-  return `
-    <div class="request">
-      <div class="request-header">
-        <div class="request-number">${request.number}</div>
-        <span class="status">${statusName(request.status)}</span>
-      </div>
-      <div class="request-info">Сумма: <strong>${formatMoney(request.amount)}</strong></div>
-      <div class="request-info">Статья: ${request.category_name || 'Не указана'}</div>
-      <div class="request-info">${request.description}</div>
-      <div class="actions">
-        ${request.status === 'draft'
-          ? `
-            <div class="request-actions">
-              <button class="button secondary" onclick="editRequest(${request.id})">Изменить</button>
-              <button class="button danger" onclick="deleteRequest(${request.id})">Удалить</button>
-              <button class="button" onclick="submitRequest(${request.id})">Отправить на согласование</button>
-            </div>
-          `
-          : ''}
-      </div>
-    </div>
-  `;
-}
-    
+    function renderRequest(request) {
+      return `
+        <div class="request">
+          <div class="request-header">
+            <div class="request-number">${escapeHtml(request.number)}</div>
+            <span class="status">${statusName(request.status)}</span>
+          </div>
+          <div class="request-info">Сумма: <strong>${formatMoney(request.amount)}</strong></div>
+          <div class="request-info">Статья: ${escapeHtml(request.category_name || 'Не указана')}</div>
+          <div class="request-info">${escapeHtml(request.description)}</div>
+          ${request.oneC_documentId ? `
+            <a class="one-c-link" href="${getOneCDocumentUrl(request.oneC_documentId)}" target="_blank">
+              Документ 1С № ${escapeHtml(request.oneC_documentNumber || '')} ↗
+            </a>
+          ` : ''}
+          <div class="actions">
+            ${request.status === 'draft' ? `
+              <div class="request-actions">
+                <button class="button secondary" onclick="editRequest(${request.id})">Изменить</button>
+                <button class="button danger" onclick="deleteRequest(${request.id})">Удалить</button>
+                <button class="button" onclick="submitRequest(${request.id})">Отправить на согласование</button>
+              </div>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    }
 
     // Открываем форму редактирования черновика.
     async function editRequest(id) {
@@ -381,9 +379,7 @@ function renderRequest(request) {
       if (!request || request.status !== 'draft') return;
       if (!confirm(`Удалить заявку ${request.number}?`)) return;
       try {
-        await api(`/requests/${id}`, {
-          method: 'DELETE'
-        });
+        await api(`/requests/${id}`, { method: 'DELETE' });
         showMessage(`Заявка ${request.number} удалена`, 'success-message');
         await showEmployeeRequests();
       } catch (error) {
@@ -431,6 +427,11 @@ function renderRequest(request) {
           <div class="request-info">Сумма: <strong>${formatMoney(request.amount)}</strong></div>
           <div class="request-info">Статья: ${escapeHtml(request.category_name || 'Не указана')}</div>
           <div class="request-info">${escapeHtml(request.description)}</div>
+          ${request.oneC_documentId ? `
+            <a class="one-c-link" href="${getOneCDocumentUrl(request.oneC_documentId)}" target="_blank">
+              Оплачено в 1С · Документ № ${escapeHtml(request.oneC_documentNumber || '')} ↗
+            </a>
+          ` : ''}
           <div class="actions">
             ${request.status === 'pending_approval' ? `
               <button class="button success" onclick="approveRequest(${request.id})">Согласовать</button>
@@ -478,13 +479,29 @@ function renderRequest(request) {
       }
     }
 
-    // Передаём согласованную заявку в 1С.
+    // Передаём согласованную заявку в 1С и добавляем ссылку на документ.
     async function payRequest(id) {
       if (!confirm('Передать заявку в 1С для оплаты?')) return;
       try {
-        await api(`/requests/${id}/pay`, { method: 'POST' });
-        showMessage('Заявка передана в 1С', 'success-message');
+        const result = await api(`/requests/${id}/pay`, { method: 'POST' });
+        const documentId = result.oneC?.documentId;
+        const documentNumber = result.oneC?.documentNumber;
+        if (!documentId) {
+          throw new Error('1С создала документ, но не вернула его идентификатор');
+        }
         await showManagerRequests();
+        const paidRequest = requests.find(item => Number(item.id) === Number(id));
+        if (paidRequest) {
+          paidRequest.oneC_documentId = documentId;
+          paidRequest.oneC_documentNumber = documentNumber;
+        }
+        document.getElementById('app').innerHTML = `
+          <h1>Заявки</h1>
+          <div class="card">
+            ${requests.length ? requests.map(renderManagerRequest).join('') : '<div class="empty">Заявок пока нет.</div>'}
+          </div>
+        `;
+        showMessage(`Заявка передана в 1С. Документ № ${documentNumber}`, 'success-message');
       } catch (error) {
         showMessage(error.message, 'error');
       }
